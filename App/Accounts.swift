@@ -5,51 +5,86 @@ struct Account: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case offline, microsoft }
     var id = UUID()
     var kind: Kind
+    /// Stored name. Demo accounts carry a "demo." prefix, e.g. "demo.Steve" is saved as demo.Steve.json.
     var name: String
     var uuid: String
     var accessToken: String?
     var refreshToken: String?
     var expires: Date?
+
+    var isDemo: Bool { name.hasPrefix("demo.") }
+    var displayName: String { isDemo ? String(name.dropFirst(5)) : name }
+    var fileName: String {
+        let safe = name.map { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." ? String($0) : "_" }.joined()
+        return safe + ".json"
+    }
 }
 
 @MainActor
 final class AccountStore: ObservableObject {
     static let shared = AccountStore()
     @Published var accounts: [Account] = []
-    @Published var activeID: UUID? { didSet { save() } }
+    @Published var activeID: UUID? {
+        didSet { UserDefaults.standard.set(activeID?.uuidString, forKey: "activeAccount") }
+    }
 
     var active: Account? { accounts.first { $0.id == activeID } ?? accounts.first }
 
-    private var fileURL: URL {
+    private var base: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("accounts.json")
+        return dir
     }
-    private struct Saved: Codable { var accounts: [Account]; var active: UUID? }
+    private var dir: URL {
+        let d = base.appendingPathComponent("accounts", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
 
     init() {
-        if let d = try? Data(contentsOf: fileURL), let s = try? JSONDecoder().decode(Saved.self, from: d) {
-            accounts = s.accounts; activeID = s.active
+        migrateOldFile()
+        load()
+        activeID = UserDefaults.standard.string(forKey: "activeAccount").flatMap(UUID.init(uuidString:))
+    }
+
+    private func load() {
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        accounts = files.filter { $0.pathExtension == "json" }
+            .compactMap { try? JSONDecoder().decode(Account.self, from: Data(contentsOf: $0)) }
+            .sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
+    }
+
+    private func write(_ a: Account) {
+        if let d = try? JSONEncoder().encode(a) {
+            try? d.write(to: dir.appendingPathComponent(a.fileName), options: [.atomic, .completeFileProtection])
         }
     }
 
-    private func save() {
-        let s = Saved(accounts: accounts, active: activeID)
-        if let d = try? JSONEncoder().encode(s) {
-            try? d.write(to: fileURL, options: [.atomic, .completeFileProtection])
-        }
+    private func erase(_ a: Account) {
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent(a.fileName))
+    }
+
+    /// Earlier builds kept every account in one accounts.json.
+    private func migrateOldFile() {
+        struct Old: Codable { var accounts: [Account]; var active: UUID? }
+        let old = base.appendingPathComponent("accounts.json")
+        guard let d = try? Data(contentsOf: old), let o = try? JSONDecoder().decode(Old.self, from: d) else { return }
+        o.accounts.forEach(write)
+        if let act = o.active { UserDefaults.standard.set(act.uuidString, forKey: "activeAccount") }
+        try? FileManager.default.removeItem(at: old)
     }
 
     func add(_ a: Account) {
         var item = a
         if let i = accounts.firstIndex(where: { $0.uuid == a.uuid && $0.kind == a.kind }) {
             item.id = accounts[i].id
+            if accounts[i].fileName != item.fileName { erase(accounts[i]) }
             accounts[i] = item
         } else {
             accounts.append(item)
         }
+        write(item)
         activeID = item.id
-        save()
     }
 
     func addOffline(_ name: String) {
@@ -58,10 +93,22 @@ final class AccountStore: ObservableObject {
         add(Account(kind: .offline, name: n, uuid: Self.offlineUUID(n)))
     }
 
+    /// Switches an account between demo and full game by renaming it and its file:
+    /// demo.Steve (demo.Steve.json) <-> Steve (Steve.json).
+    func setDemo(_ a: Account, _ demo: Bool) {
+        guard a.isDemo != demo, let i = accounts.firstIndex(where: { $0.id == a.id }) else { return }
+        var n = a
+        n.name = demo ? "demo." + a.displayName : a.displayName
+        erase(a)
+        accounts[i] = n
+        write(n)
+        LogStore.shared.add("\(a.fileName) -> \(n.fileName)")
+    }
+
     func remove(_ a: Account) {
+        erase(a)
         accounts.removeAll { $0.id == a.id }
         if activeID == a.id { activeID = accounts.first?.id }
-        save()
     }
 
     static func offlineUUID(_ name: String) -> String {
@@ -165,6 +212,9 @@ enum MSAuth {
         let (s3, mc) = try await send("https://api.minecraftservices.com/authentication/login_with_xbox",
                                       json: ["identityToken": "XBL3.0 x=\(uhs);\(xstsToken)"])
         guard s3 == 200, let mcToken = mc["access_token"] as? String else {
+            if s3 == 403 {
+                throw Failure(message: "Mojang has not approved this app ID for the Minecraft API yet. Request approval at aka.ms/mce-reviewappid, then try again.")
+            }
             throw Failure(message: "Minecraft sign-in failed (\(s3)).")
         }
         let (s4, prof) = try await send("https://api.minecraftservices.com/minecraft/profile", bearer: mcToken)

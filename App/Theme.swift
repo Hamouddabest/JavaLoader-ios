@@ -70,7 +70,7 @@ struct Avatar: View {
     let account: Account?
     var size: CGFloat = 48
     var body: some View {
-        let key = account.map { $0.kind == .microsoft ? $0.uuid : $0.name } ?? "MHF_Steve"
+        let key = account.map { $0.kind == .microsoft ? $0.uuid : $0.displayName } ?? "MHF_Steve"
         AsyncImage(url: URL(string: "https://mc-heads.net/avatar/\(key)/128")) { img in
             img.resizable().interpolation(.none)
         } placeholder: {

@@ -84,7 +84,7 @@ struct SettingsView: View {
                     TextField("Client ID", text: $clientID)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
-                Section("About") { LabeledContent("Version", value: "0.2.0") }
+                Section("About") { LabeledContent("Version", value: "0.3.0") }
             }
             .scrollContentBackground(.hidden)
             .background(Backdrop())

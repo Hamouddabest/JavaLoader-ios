@@ -27,8 +27,8 @@ struct PlayView: View {
                             HStack(spacing: 12) {
                                 Avatar(account: accounts.active)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(accounts.active?.name ?? "No account").font(.headline)
-                                    Text(accounts.active.map { $0.kind == .microsoft ? "Microsoft" : "Offline" } ?? "Tap to add")
+                                    Text(accounts.active?.displayName ?? "No account").font(.headline)
+                                    Text(accounts.active.map { $0.isDemo ? "Microsoft, demo" : ($0.kind == .microsoft ? "Microsoft" : "Offline") } ?? "Tap to add")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -66,7 +66,7 @@ struct PlayView: View {
                             }.buttonStyle(.borderedProminent)
                         } else {
                             Button { log.add("Launch pressed: \(blocker ?? "")") } label: {
-                                Label("Launch", systemImage: "play.fill")
+                                Label(accounts.active?.isDemo == true ? "Launch demo" : "Launch", systemImage: "play.fill")
                                     .frame(maxWidth: .infinity).padding(.vertical, 8)
                             }.buttonStyle(.borderedProminent).disabled(true)
                             if let b = blocker { Text(b).font(.caption).foregroundStyle(.secondary) }
@@ -77,7 +77,7 @@ struct PlayView: View {
                     Card(title: "Checklist") {
                         StatusRow(label: "Version list", ok: versions.manifest != nil,
                                   detail: versions.manifest.map { "\($0.versions.count) versions" } ?? "offline")
-                        StatusRow(label: "Account", ok: accounts.active != nil, detail: accounts.active?.name ?? "none")
+                        StatusRow(label: "Account", ok: accounts.active != nil, detail: accounts.active?.displayName ?? "none")
                         StatusRow(label: "Game files", ok: isInstalled, detail: isInstalled ? versions.selected : "not installed")
                         StatusRow(label: "Java runtime", ok: hasJava, detail: SystemInfo.installedRuntimes().first ?? "missing")
                         StatusRow(label: "JIT", ok: SystemInfo.jitEnabled, detail: SystemInfo.jitEnabled ? "on" : "off")

@@ -23,15 +23,26 @@ struct AccountsView: View {
                     HStack(spacing: 12) {
                         Avatar(account: a, size: 42)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(a.name).font(.headline)
-                            Badge(text: a.kind == .microsoft ? "Microsoft" : "Offline",
-                                  color: a.kind == .microsoft ? .blue : .gray)
+                            Text(a.displayName).font(.headline)
+                            HStack(spacing: 6) {
+                                Badge(text: a.kind == .microsoft ? "Microsoft" : "Offline",
+                                      color: a.kind == .microsoft ? .blue : .gray)
+                                if a.isDemo { Badge(text: "Demo", color: .orange) }
+                            }
                         }
                         Spacer()
                         if accounts.active?.id == a.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
                     }
                 }
                 .listRowBackground(Theme.card)
+                .contextMenu {
+                    if a.kind == .microsoft {
+                        Button { accounts.setDemo(a, !a.isDemo) } label: {
+                            Label(a.isDemo ? "Switch to full game" : "Switch to demo", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                    Button(role: .destructive) { accounts.remove(a) } label: { Label("Remove", systemImage: "trash") }
+                }
                 .swipeActions { Button(role: .destructive) { accounts.remove(a) } label: { Label("Remove", systemImage: "trash") } }
             }
         }
@@ -67,47 +78,79 @@ struct MicrosoftSignIn: View {
     @State private var code: MSAuth.Code?
     @State private var error: String?
     @State private var working = false
+    @State private var pending: Account?
+    @State private var askDemo = false
 
     private var missingID: Bool { clientID.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                if missingID {
-                    Text("Microsoft sign-in needs an Azure application (client) ID. Enter it here or in Settings.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                TextField("Client ID", text: $clientID)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .padding(12).background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
-                if let c = code {
-                    Card(title: "Enter this code") {
-                        Text(c.userCode).font(.system(size: 36, weight: .bold, design: .monospaced))
-                        Text("Open \(c.uri) and type the code, then sign in. This screen continues by itself.")
-                            .font(.callout).foregroundStyle(.secondary)
-                        HStack {
-                            Button("Copy code") { UIPasteboard.general.string = c.userCode }
-                            if let u = URL(string: c.uri) { Link("Open page", destination: u) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Card(title: "Application (client) ID") {
+                        TextField("Paste your client ID", text: $clientID)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .padding(12).background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                        DisclosureGroup("How to get one (free, about 5 minutes)") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("1. Open the Azure portal, App registrations, New registration.")
+                                Text("2. Name it anything. For account types pick Personal Microsoft accounts only.")
+                                Text("3. Open Authentication and set Allow public client flows to Yes.")
+                                Text("4. Copy the Application (client) ID from the Overview page and paste it above.")
+                                Text("5. Mojang must approve the ID before Minecraft sign-in works. Send it through the approval form.")
+                                HStack {
+                                    Link("Azure portal", destination: URL(string: "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")!)
+                                    Spacer()
+                                    Link("Approval form", destination: URL(string: "https://aka.ms/mce-reviewappid")!)
+                                }
+                            }
+                            .font(.callout).foregroundStyle(.secondary).padding(.top, 6)
+                        }.tint(Theme.accent)
+                    }
+
+                    if let c = code {
+                        Card(title: "Enter this code") {
+                            Text(c.userCode).font(.system(size: 36, weight: .bold, design: .monospaced))
+                            Text("Open \(c.uri) and type the code, then sign in. This screen continues by itself.")
+                                .font(.callout).foregroundStyle(.secondary)
+                            HStack {
+                                Button("Copy code") { UIPasteboard.general.string = c.userCode }
+                                Spacer()
+                                if let u = URL(string: c.uri) { Link("Open page", destination: u) }
+                            }
+                            ProgressView()
                         }
-                        ProgressView()
+                    } else {
+                        Button { Task { await signIn() } } label: {
+                            Label("Sign in with Microsoft", systemImage: "person.badge.key.fill")
+                                .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(working || missingID)
                     }
-                } else {
-                    Button { Task { await signIn() } } label: {
-                        Label("Sign in with Microsoft", systemImage: "person.badge.key.fill")
-                            .frame(maxWidth: .infinity).padding(.vertical, 8)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(working || missingID)
-                }
-                if let e = error { Text(e).font(.callout).foregroundStyle(.red) }
-                Spacer()
+                    if let e = error { Text(e).font(.callout).foregroundStyle(.red) }
+                }.padding()
             }
-            .padding()
             .background(Backdrop())
             .navigationTitle("Microsoft")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .alert("Play on demo?", isPresented: $askDemo) {
+                Button("Demo") { finish(demo: true) }
+                Button("No") { finish(demo: false) }
+            } message: {
+                Text("Demo is a limited free trial. Choose No to use the full game on an account that owns Minecraft: Java Edition.")
+            }
         }
+    }
+
+    private func finish(demo: Bool) {
+        guard var a = pending else { return }
+        a.name = demo ? "demo." + a.displayName : a.displayName
+        accounts.add(a)
+        LogStore.shared.add("Saved \(a.fileName)")
+        pending = nil
+        dismiss()
     }
 
     private func signIn() async {
@@ -118,9 +161,10 @@ struct MicrosoftSignIn: View {
             let c = try await MSAuth.start(clientID: id)
             code = c
             let account = try await MSAuth.finish(c, clientID: id)
-            accounts.add(account)
+            code = nil
+            pending = account
+            askDemo = true
             LogStore.shared.add("Signed in as \(account.name)")
-            dismiss()
         } catch {
             code = nil
             self.error = error.localizedDescription
