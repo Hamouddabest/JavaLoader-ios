@@ -8,14 +8,17 @@ struct SystemView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    Card(title: "JIT") {
-                        StatusRow(label: "JIT enabled", ok: jit, detail: jit ? "debugger attached" : "off")
-                        StatusRow(label: "iOS \(SystemInfo.iosVersion)", ok: true,
-                                  detail: SystemInfo.needsTXMWorkaround ? "needs TXM script" : "standard JIT")
-                        Text("Self-pairing, so the app can turn JIT on by itself, is the next piece to build.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Button("Re-check") { jit = SystemInfo.jitEnabled }
-                    }
+                    NavigationLink { JITView() } label: {
+                        Card(title: "JIT") {
+                            HStack {
+                                StatusRow(label: jit ? "JIT is on" : "JIT is off", ok: jit,
+                                          detail: "iOS \(SystemInfo.iosVersion)")
+                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                            }
+                            Text("Enable it with StikDebug, SideStore or a pairing file.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }.buttonStyle(.plain)
                     Card(title: "Java runtimes") {
                         if runtimes.isEmpty {
                             Text("None yet. Runtimes will be downloaded here once our OpenJDK iOS build exists.")
@@ -36,6 +39,7 @@ struct SystemView: View {
             .background(Backdrop())
             .navigationTitle("System")
             .onAppear {
+                jit = SystemInfo.jitEnabled
                 try? FileManager.default.createDirectory(at: SystemInfo.runtimeDir, withIntermediateDirectories: true)
                 try? FileManager.default.createDirectory(at: SystemInfo.gameDir, withIntermediateDirectories: true)
             }
@@ -84,7 +88,7 @@ struct SettingsView: View {
                     TextField("Client ID", text: $clientID)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
-                Section("About") { LabeledContent("Version", value: "0.3.0") }
+                Section("About") { LabeledContent("Version", value: "0.4.0") }
             }
             .scrollContentBackground(.hidden)
             .background(Backdrop())

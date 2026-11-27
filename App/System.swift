@@ -34,3 +34,35 @@ enum SystemInfo {
 
     static var physicalMemoryMB: Int { Int(ProcessInfo.processInfo.physicalMemory / 1_048_576) }
 }
+
+enum Pairing {
+    struct Failure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    static var dir: URL { SystemInfo.documents.appendingPathComponent("pairing", isDirectory: true) }
+    static var file: URL { dir.appendingPathComponent("pairing_file.plist") }
+    static var exists: Bool { FileManager.default.fileExists(atPath: file.path) }
+
+    /// Copies a pairing file into the app after checking that it is a property list.
+    static func importFile(from url: URL) throws {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let data = try Data(contentsOf: url)
+        guard (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) is [String: Any] else {
+            throw Failure(message: "That file is not a pairing file (it is not a property list).")
+        }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: file)
+        try data.write(to: file, options: .atomic)
+    }
+
+    static func remove() { try? FileManager.default.removeItem(at: file) }
+
+    static var summary: String? {
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        let keys = ((try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any])?.count ?? 0
+        return "\(data.count) bytes, \(keys) entries"
+    }
+}

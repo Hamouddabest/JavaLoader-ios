@@ -10,7 +10,8 @@ Everything here is written from scratch. No code is taken from other Minecraft l
 |---|---|
 | App shell (Play, Java, JIT, Log, Settings) | Done |
 | JIT status detection | Done |
-| Self-pairing to turn on JIT without a PC | Next (reuses the approach from [PairKit](https://github.com/Hamouddabest/pairkit)) |
+| JIT: enable through StikDebug / SideStore, import and export a pairing file | Done |
+| JIT: pair the device inside this app | Next (reuses [PairKit](https://github.com/Hamouddabest/pairkit)) |
 | Own OpenJDK build for iOS, built in GitHub Actions | Planned |
 | OpenGL to Metal layer and the LWJGL pieces | Planned |
 | Minecraft launcher (Microsoft login, version download, launch) | Planned |
