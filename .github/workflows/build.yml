@@ -7,17 +7,14 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch submodules (kept as plain files in this repo)
+      - name: Fetch submodules at Amethyst's pinned commits
         run: |
           set -e
-          git config -f .gitmodules --get-regexp '\.url$' | while read key url; do
-            name=${key%.url}; path=$(git config -f .gitmodules --get $name.path)
-            branch=$(git config -f .gitmodules --get $name.branch || true)
-            if [ -z "$(ls -A $path 2>/dev/null)" ]; then
-              rm -rf "$path"
-              git clone --depth 1 ${branch:+-b $branch} "$url" "$path" || git clone --depth 1 "$url" "$path"
-            fi
-          done
+          clone() { rm -rf "$1"; git clone -q "$2" "$1"; git -C "$1" checkout -q "$3"; }
+          clone Natives/external/AFNetworking https://github.com/AFNetworking/AFNetworking d9f589cc2c1fe9d55eb5eea00558010afea7a41e
+          clone Natives/external/DBNumberedSlider https://github.com/khanhduytran0/DBNumberedSlider 4eddc68b5f92247f8afc0f6114d1b92b338749f4
+          clone Natives/external/MobileGlues https://github.com/MobileGL-Dev/MobileGlues f0fb4d32794a130f4021342605a751ef2d0f84d8
+          clone Natives/external/fishhook https://github.com/khanhduytran0/fishhook ab23646149fd8594545668754a1b7ded56a1b9af
       - uses: actions/setup-java@v4
         with: { distribution: zulu, java-version: "8" }
       - name: Tools
