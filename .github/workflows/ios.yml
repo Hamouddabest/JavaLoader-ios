@@ -1,0 +1,29 @@
+name: Build IPA
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: brew install xcodegen
+      - name: Build
+        run: |
+          xcodegen generate
+          xcodebuild -project JavaLoader.xcodeproj -scheme JavaLoader -configuration Release \
+            -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+          mkdir -p out/Payload
+          cp -R build/Build/Products/Release-iphoneos/JavaLoader.app out/Payload/
+          (cd out && zip -qr JavaLoader.ipa Payload)
+      - uses: actions/upload-artifact@v4
+        with: { name: JavaLoader.ipa, path: out/JavaLoader.ipa }
+      - name: Release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release delete latest -y --cleanup-tag || true
+          gh release create latest out/JavaLoader.ipa -t "Latest build" -n "Automatic build of main."
