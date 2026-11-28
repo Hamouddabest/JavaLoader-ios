@@ -4,13 +4,46 @@ on:
 permissions:
   contents: write
 jobs:
-  jdk:
+  host-jdk:
+    # A normal macOS JDK of the same source: the iOS cross build needs it to run its own tools.
+    runs-on: macos-15
+    timeout-minutes: 345
+    steps:
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "27" }
+      - run: brew install autoconf
+      - run: git clone --depth 1 https://github.com/openjdk/mobile jdk-src
+      - name: Configure
+        working-directory: jdk-src
+        run: |
+          bash configure --with-boot-jdk="$JAVA_HOME" --with-debug-level=release \
+            --with-native-debug-symbols=none --disable-warnings-as-errors \
+            --disable-precompiled-headers || (tail -80 config.log; exit 1)
+      - name: Build
+        working-directory: jdk-src
+        run: make jdk-image JOBS=3 LOG=warn
+      - name: Package
+        run: |
+          IMG=$(ls -d jdk-src/build/*/images/jdk | head -1)
+          tar -C "$IMG" -czf host-jdk.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with: { name: host-jdk, path: host-jdk.tar.gz, retention-days: 3 }
+
+  jdk-ios:
+    needs: host-jdk
     runs-on: macos-15
     timeout-minutes: 345
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "27" }
+      - uses: actions/download-artifact@v4
+        with: { name: host-jdk }
+      - name: Unpack host JDK
+        run: |
+          mkdir host-jdk && tar -xzf host-jdk.tar.gz -C host-jdk
+          host-jdk/Contents/Home/bin/java -version 2>&1 || host-jdk/bin/java -version
+          ls host-jdk | head
       - name: libffi for iOS (needed by the Zero interpreter)
         run: |
           set -e
@@ -23,24 +56,34 @@ jobs:
             CFLAGS="-O2 -fPIC" \
             LDFLAGS="-target arm64-apple-ios16.0 -isysroot $SDK"
           make -j3 install
-          ls "$GITHUB_WORKSPACE/ffi-ios/lib"
-      - name: Tools
-        run: brew install autoconf
-      - name: Get OpenJDK Mobile
-        run: git clone --depth 1 https://github.com/openjdk/mobile jdk-src
-      - name: Patch linker naming for iOS (Mach-O, not ELF)
+      - run: brew install autoconf
+      - run: git clone --depth 1 https://github.com/openjdk/mobile jdk-src
+      - name: Patch the tree for iOS
         working-directory: jdk-src
         run: |
+          # Mach-O libraries use install_name, not ELF soname.
           sed -i '' '57s/isTargetOs, macosx)/isTargetOs, macosx ios)/' make/common/native/Link.gmk
-          sed -n 55,60p make/common/native/Link.gmk
+          # Zero on Apple arm64 references W^X symbols that only the aarch64 files define.
+          cat >> src/hotspot/os_cpu/bsd_zero/os_bsd_zero.cpp <<'CPP'
+
+          #ifdef MACOS_AARCH64
+          WXMode DefaultWXWriteMode = WXWrite;
+          THREAD_LOCAL bool os::_jit_exec_enabled;
+          void os::current_thread_enable_wx(WXMode mode) { _jit_exec_enabled = (mode != WXWrite); }
+          void os::thread_wx_enable_write_impl() {}
+          #endif
+          CPP
       - name: Configure
         working-directory: jdk-src
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          HOSTJDK="$GITHUB_WORKSPACE/host-jdk"
+          [ -d "$HOSTJDK/Contents/Home" ] && HOSTJDK="$HOSTJDK/Contents/Home"
           bash configure \
             --openjdk-target=aarch64-apple-ios \
             --with-sysroot="$SDK" \
             --with-boot-jdk="$JAVA_HOME" \
+            --with-build-jdk="$HOSTJDK" \
             --with-jvm-variants=zero \
             --with-libffi="$GITHUB_WORKSPACE/ffi-ios" \
             --with-cups-include="$(xcrun --sdk macosx --show-sdk-path)/usr/include" \
