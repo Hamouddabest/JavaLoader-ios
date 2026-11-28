@@ -38,6 +38,7 @@ jobs:
             --with-boot-jdk="$JAVA_HOME" \
             --with-jvm-variants=zero \
             --with-libffi="$GITHUB_WORKSPACE/ffi-ios" \
+            --with-cups-include="$(xcrun --sdk macosx --show-sdk-path)/usr/include" \
             --enable-headless-only \
             --with-debug-level=release \
             --with-native-debug-symbols=none \
