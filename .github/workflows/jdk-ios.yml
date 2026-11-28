@@ -28,6 +28,11 @@ jobs:
         run: brew install autoconf
       - name: Get OpenJDK Mobile
         run: git clone --depth 1 https://github.com/openjdk/mobile jdk-src
+      - name: Patch linker naming for iOS (Mach-O, not ELF)
+        working-directory: jdk-src
+        run: |
+          sed -i '' '57s/isTargetOs, macosx)/isTargetOs, macosx ios)/' make/common/native/Link.gmk
+          sed -n 55,60p make/common/native/Link.gmk
       - name: Configure
         working-directory: jdk-src
         run: |
