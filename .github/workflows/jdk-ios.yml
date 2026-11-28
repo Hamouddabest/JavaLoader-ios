@@ -24,6 +24,8 @@ jobs:
             LDFLAGS="-target arm64-apple-ios16.0 -isysroot $SDK"
           make -j3 install
           ls "$GITHUB_WORKSPACE/ffi-ios/lib"
+      - name: Tools
+        run: brew install autoconf
       - name: Get OpenJDK Mobile
         run: git clone --depth 1 https://github.com/openjdk/mobile jdk-src
       - name: Configure
