@@ -14,14 +14,14 @@ jobs:
       - name: libffi for iOS (needed by the Zero interpreter)
         run: |
           set -e
-          curl -fsSL https://github.com/libffi/libffi/releases/download/v3.4.6/libffi-3.4.6.tar.gz | tar xz
+          curl -fsSL https://github.com/libffi/libffi/releases/download/v3.5.2/libffi-3.5.2.tar.gz | tar xz
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          cd libffi-3.4.6
+          cd libffi-3.5.2
           ./configure --host=aarch64-apple-darwin --prefix="$GITHUB_WORKSPACE/ffi-ios" \
             --disable-shared --enable-static --disable-docs \
-            CC="$(xcrun --sdk iphoneos -f clang)" \
-            CFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -O2 -fPIC" \
-            LDFLAGS="-arch arm64 -isysroot $SDK"
+            CC="$(xcrun --sdk iphoneos -f clang) -target arm64-apple-ios16.0 -isysroot $SDK" \
+            CFLAGS="-O2 -fPIC" \
+            LDFLAGS="-target arm64-apple-ios16.0 -isysroot $SDK"
           make -j3 install
           ls "$GITHUB_WORKSPACE/ffi-ios/lib"
       - name: Get OpenJDK Mobile
