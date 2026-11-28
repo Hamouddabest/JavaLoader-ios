@@ -83,12 +83,12 @@ struct SettingsView: View {
                     TextField("Extra JVM arguments", text: $jvmArgs)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
-                Section(header: Text("Microsoft sign-in"),
-                        footer: Text("Azure application (client) ID used for the device-code sign-in.")) {
+                Section(header: Text("Microsoft sign-in (advanced)"),
+                        footer: Text("Optional. Overrides the app ID built into this version.")) {
                     TextField("Client ID", text: $clientID)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
-                Section("About") { LabeledContent("Version", value: "0.4.0") }
+                Section("About") { LabeledContent("Version", value: "0.5.0") }
             }
             .scrollContentBackground(.hidden)
             .background(Backdrop())

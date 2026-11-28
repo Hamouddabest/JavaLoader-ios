@@ -1,5 +1,7 @@
 import Foundation
 import CryptoKit
+import AuthenticationServices
+import UIKit
 
 struct Account: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case offline, microsoft }
@@ -159,6 +161,61 @@ enum MSAuth {
         return ((resp as? HTTPURLResponse)?.statusCode ?? 0, obj)
     }
 
+    // MARK: browser sign-in (Microsoft's own login page, PKCE)
+
+    private static var webSession: ASWebAuthenticationSession?
+    static let redirect = "javaloader://auth"
+
+    private static func b64url(_ d: Data) -> String {
+        d.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+
+    @MainActor
+    static func browserLogin(clientID: String) async throws -> Account {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let verifier = b64url(Data(bytes))
+        let challenge = b64url(Data(SHA256.hash(data: Data(verifier.utf8))))
+
+        var c = URLComponents(string: "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize")!
+        c.queryItems = [
+            .init(name: "client_id", value: clientID),
+            .init(name: "response_type", value: "code"),
+            .init(name: "redirect_uri", value: redirect),
+            .init(name: "scope", value: scope),
+            .init(name: "code_challenge", value: challenge),
+            .init(name: "code_challenge_method", value: "S256"),
+            .init(name: "prompt", value: "select_account"),
+        ]
+        let callback: URL = try await withCheckedThrowingContinuation { cont in
+            let session = ASWebAuthenticationSession(url: c.url!, callbackURLScheme: "javaloader") { url, err in
+                if let url {
+                    cont.resume(returning: url)
+                } else if (err as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
+                    cont.resume(throwing: Failure(message: "Sign-in was cancelled."))
+                } else {
+                    cont.resume(throwing: Failure(message: err?.localizedDescription ?? "Sign-in failed."))
+                }
+            }
+            session.presentationContextProvider = WebAuthPresenter.shared
+            webSession = session
+            if !session.start() { cont.resume(throwing: Failure(message: "Could not open the sign-in page.")) }
+        }
+        webSession = nil
+        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard let code = items.first(where: { $0.name == "code" })?.value else {
+            throw Failure(message: items.first(where: { $0.name == "error_description" })?.value ?? "No sign-in code came back.")
+        }
+        let (_, o) = try await send(tokenURL, form: [
+            "grant_type": "authorization_code", "client_id": clientID, "code": code,
+            "redirect_uri": redirect, "code_verifier": verifier, "scope": scope])
+        guard let at = o["access_token"] as? String else {
+            throw Failure(message: (o["error_description"] as? String) ?? "Could not finish sign-in.")
+        }
+        return try await minecraft(msToken: at, refresh: o["refresh_token"] as? String)
+    }
+
     static func start(clientID: String) async throws -> Code {
         let (st, o) = try await send("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode",
                                      form: ["client_id": clientID, "scope": scope])
@@ -223,5 +280,13 @@ enum MSAuth {
         }
         return Account(kind: .microsoft, name: name, uuid: id, accessToken: mcToken, refreshToken: refresh,
                        expires: Date().addingTimeInterval(Double(mc["expires_in"] as? Int ?? 86400)))
+    }
+}
+
+final class WebAuthPresenter: NSObject, ASWebAuthenticationPresentationContextProviding {
+    static let shared = WebAuthPresenter()
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }.first { $0.isKeyWindow } ?? ASPresentationAnchor()
     }
 }

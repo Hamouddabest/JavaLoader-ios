@@ -74,40 +74,23 @@ struct AccountsView: View {
 struct MicrosoftSignIn: View {
     @EnvironmentObject var accounts: AccountStore
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("msClientID") private var clientID = ""
+    @AppStorage("msClientID") private var override = ""
     @State private var code: MSAuth.Code?
     @State private var error: String?
     @State private var working = false
     @State private var pending: Account?
     @State private var askDemo = false
 
-    private var missingID: Bool { clientID.trimmingCharacters(in: .whitespaces).isEmpty }
+    private var clientID: String {
+        let o = override.trimmingCharacters(in: .whitespaces)
+        return o.isEmpty ? BuildConfig.msClientID : o
+    }
+    private var missingID: Bool { clientID.isEmpty }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Card(title: "Application (client) ID") {
-                        TextField("Paste your client ID", text: $clientID)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .padding(12).background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                        DisclosureGroup("How to get one (free, about 5 minutes)") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("1. Open the Azure portal, App registrations, New registration.")
-                                Text("2. Name it anything. For account types pick Personal Microsoft accounts only.")
-                                Text("3. Open Authentication and set Allow public client flows to Yes.")
-                                Text("4. Copy the Application (client) ID from the Overview page and paste it above.")
-                                Text("5. Mojang must approve the ID before Minecraft sign-in works. Send it through the approval form.")
-                                HStack {
-                                    Link("Azure portal", destination: URL(string: "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")!)
-                                    Spacer()
-                                    Link("Approval form", destination: URL(string: "https://aka.ms/mce-reviewappid")!)
-                                }
-                            }
-                            .font(.callout).foregroundStyle(.secondary).padding(.top, 6)
-                        }.tint(Theme.accent)
-                    }
-
                     if let c = code {
                         Card(title: "Enter this code") {
                             Text(c.userCode).font(.system(size: 36, weight: .bold, design: .monospaced))
@@ -121,14 +104,35 @@ struct MicrosoftSignIn: View {
                             ProgressView()
                         }
                     } else {
-                        Button { Task { await signIn() } } label: {
+                        Button { Task { await signIn(browser: true) } } label: {
                             Label("Sign in with Microsoft", systemImage: "person.badge.key.fill")
                                 .frame(maxWidth: .infinity).padding(.vertical, 8)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(working || missingID)
+                        Button("Use a code instead") { Task { await signIn(browser: false) } }
+                            .font(.callout).disabled(working || missingID)
                     }
                     if let e = error { Text(e).font(.callout).foregroundStyle(.red) }
+
+                    Card {
+                        DisclosureGroup(missingID ? "Setup needed: no app ID yet" : "Advanced") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Sign-in runs through one registered Azure app. A release build has its ID built in. Until then, paste one here.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                                TextField("Application (client) ID", text: $override)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                    .padding(12).background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                Text("1. Azure portal, App registrations, New registration.\n2. Account type: Personal Microsoft accounts only.\n3. Authentication, Add a platform, Mobile and desktop, redirect URI javaloader://auth. Allow public client flows: Yes.\n4. Copy the Application (client) ID.\n5. Send it through Mojang's approval form so Minecraft accepts it.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                                HStack {
+                                    Link("Azure portal", destination: URL(string: "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")!)
+                                    Spacer()
+                                    Link("Approval form", destination: URL(string: "https://aka.ms/mce-reviewappid")!)
+                                }
+                            }.padding(.top, 6)
+                        }.tint(Theme.accent)
+                    }
                 }.padding()
             }
             .background(Backdrop())
@@ -153,14 +157,19 @@ struct MicrosoftSignIn: View {
         dismiss()
     }
 
-    private func signIn() async {
+    private func signIn(browser: Bool) async {
         working = true; error = nil
         defer { working = false }
-        let id = clientID.trimmingCharacters(in: .whitespaces)
+        let id = clientID
         do {
-            let c = try await MSAuth.start(clientID: id)
-            code = c
-            let account = try await MSAuth.finish(c, clientID: id)
+            let account: Account
+            if browser {
+                account = try await MSAuth.browserLogin(clientID: id)
+            } else {
+                let c = try await MSAuth.start(clientID: id)
+                code = c
+                account = try await MSAuth.finish(c, clientID: id)
+            }
             code = nil
             pending = account
             askDemo = true
