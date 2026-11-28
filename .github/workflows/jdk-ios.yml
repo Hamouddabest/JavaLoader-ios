@@ -1,0 +1,62 @@
+name: Build JDK for iOS
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  jdk:
+    runs-on: macos-15
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "27" }
+      - name: libffi for iOS (needed by the Zero interpreter)
+        run: |
+          set -e
+          curl -fsSL https://github.com/libffi/libffi/releases/download/v3.4.6/libffi-3.4.6.tar.gz | tar xz
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          cd libffi-3.4.6
+          ./configure --host=aarch64-apple-darwin --prefix="$GITHUB_WORKSPACE/ffi-ios" \
+            --disable-shared --enable-static --disable-docs \
+            CC="$(xcrun --sdk iphoneos -f clang)" \
+            CFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -O2 -fPIC" \
+            LDFLAGS="-arch arm64 -isysroot $SDK"
+          make -j3 install
+          ls "$GITHUB_WORKSPACE/ffi-ios/lib"
+      - name: Get OpenJDK Mobile
+        run: git clone --depth 1 https://github.com/openjdk/mobile jdk-src
+      - name: Configure
+        working-directory: jdk-src
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          bash configure \
+            --openjdk-target=aarch64-apple-ios \
+            --with-sysroot="$SDK" \
+            --with-boot-jdk="$JAVA_HOME" \
+            --with-jvm-variants=zero \
+            --with-libffi="$GITHUB_WORKSPACE/ffi-ios" \
+            --enable-headless-only \
+            --with-debug-level=release \
+            --with-native-debug-symbols=none \
+            --disable-precompiled-headers \
+            --disable-warnings-as-errors \
+            --with-extra-cflags="-miphoneos-version-min=16.0" \
+            --with-extra-cxxflags="-miphoneos-version-min=16.0" \
+            --with-extra-ldflags="-miphoneos-version-min=16.0" \
+            || (tail -80 config.log; exit 1)
+      - name: Build
+        working-directory: jdk-src
+        run: make images JOBS=3 LOG=warn
+      - name: Package
+        run: |
+          IMG=$(ls -d jdk-src/build/*/images/jdk | head -1)
+          echo "$IMG"; du -sh "$IMG"
+          tar -C "$IMG" -czf jdk-ios-arm64-zero.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with: { name: jdk-ios-arm64-zero, path: jdk-ios-arm64-zero.tar.gz }
+      - name: Release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release delete jdk-ios -y --cleanup-tag || true
+          gh release create jdk-ios jdk-ios-arm64-zero.tar.gz -t "JDK for iOS (Zero)" -n "OpenJDK Mobile, arm64 iOS, Zero interpreter."
